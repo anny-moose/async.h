@@ -1,7 +1,8 @@
 /*
  *
- * If you are reading this beast i highly advise you to expand all preprocessor macros beforehand, as in this file they don't help
- * readibility in the slightest
+ * If you are reading this beast i highly advise you to expand all preprocessor
+ * macros beforehand, as in this file they don't help readibility in the
+ * slightest
  *
  */
 #include <err.h>
@@ -14,75 +15,102 @@
 
 /* define SYMBOL_APPEND before including to resolve name clashing */
 
+#ifndef SYMBOL_APPEND
+#define SYMBOL_APPEND
+#endif
+
 #define GLUE(pref, sym) pref##sym
 #define JOIN(pref, sym) GLUE(pref, sym)
 #define DECL(sym) JOIN(SYMBOL_APPEND, sym)
-/* why does C require three macros for this? fuck if i know. */
+/* why does C require three macros for this? hell if i know. */
 
 typedef struct thread_queue {
-    pthread_t* threads;
+    pthread_t *threads;
     pthread_mutex_t queue_mtx;
+    sem_t thread_available; /* this is really ugly and there's probably a better way to do this */
     LList_t queue;
     pthread_cond_t cv;
+    int num_threads;
 } DECL(thread_queue_t);
 
 typedef struct promise {
-    void* data;
+    void *data;
     sem_t done; /* should be waited before accessing data */
 } DECL(promise_t);
 
 typedef struct task {
-    void* args;
-    void* (*callback)(void*);
+    void *args;
+    void *(*callback)(void *);
     DECL(promise_t) * promise;
 } DECL(task_t);
 
-static inline void* DECL(worker_func)(void* arg) {
-    DECL(thread_queue_t)* state = (DECL(thread_queue_t)*)arg;
+int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads);
+int DECL(destroy_queue)(DECL(thread_queue_t) * ctx);
 
-    pthread_mutex_t mtx;
-    pthread_mutex_init(&mtx, NULL);
-    pthread_mutex_lock(&mtx);
-
-    goto work; /* skip waiting for condition just in case we already have work */
-wait:
-    printf("waiting for cond!\n");
-    if (pthread_cond_wait(&state->cv, &mtx) != 0) err(EXIT_FAILURE, "failed waiting on CV");
-work: /* this is supposed to be a microoptimization but it probably does
-          fuckall */
-    printf("locking queue mutex!\n");
-    pthread_mutex_lock(&state->queue_mtx);
-    DECL(task_t)* task = (DECL(task_t)*)LList_pop_head(&state->queue);
-    pthread_mutex_unlock(&state->queue_mtx);
-    if (!task) goto wait;
-
-    printf("doing work!\n");
-    task->promise->data = task->callback(task->args);
-    sem_post(&task->promise->done);
-
-    free(task->args);
-    free(task);
-
-    goto work;
-}
-
-int DECL(init_queue)(DECL(thread_queue_t) * queue, int num_threads);
-
+inline void *DECL(worker_func)(void *arg);
 int DECL(init_promise)(DECL(promise_t) * promise);
 
-DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg);
+DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void *(*callback)(void *), void *arg);
+inline void *DECL(await)(DECL(promise_t) * promise);
+
+/*
+ *
+ */
 
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
 /* todo: handle and check errors for all funcs */
 
-int DECL(init_queue)(DECL(thread_queue_t) * queue, int num_threads) {
-    pthread_mutex_init(&queue->queue_mtx, NULL);
-    pthread_cond_init(&queue->cv, NULL);
-    LList_init(&queue->queue, sizeof(DECL(task_t)), NULL);
+inline void *DECL(worker_func)(void *arg) {
+    DECL(thread_queue_t) *state = (DECL(thread_queue_t) *)arg;
 
-    queue->threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
+    fprintf(stderr, "Thread started!!\n");
+    pthread_mutex_lock(&state->queue_mtx);
+
+    sem_post(&state->thread_available);
+    while (1) {
+        if (pthread_cond_wait(&state->cv, &state->queue_mtx) != 0) err(EXIT_FAILURE, "failed waiting on CV");
+
+        while (state->queue.length > 0) {
+            DECL(task_t) *task = (DECL(task_t) *)LList_pop_head(&state->queue);
+            pthread_mutex_unlock(&state->queue_mtx);
+
+            printf("doing work!\n");
+            task->promise->data = task->callback(task->args);
+            sem_post(&task->promise->done);
+
+            free(task);
+            pthread_mutex_lock(&state->queue_mtx);
+        }
+
+        if (state->num_threads == -1) {
+            pthread_mutex_unlock(&state->queue_mtx);
+            break;
+        }
+    }
+
+    fprintf(stderr, "Thread exiting!!\n");
+
+    return NULL;
+}
+
+inline void *DECL(await)(DECL(promise_t) * promise) {
+    sem_wait(&promise->done);
+    void *ret_val = promise->data;
+    free(promise);
+
+    return ret_val;
+}
+
+int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
+    pthread_mutex_init(&ctx->queue_mtx, NULL);
+    pthread_cond_init(&ctx->cv, NULL);
+    sem_init(&ctx->thread_available, 0, 0);
+    ctx->num_threads = num_threads;
+    LList_init(&ctx->queue, sizeof(DECL(task_t)), NULL);
+
+    ctx->threads = (pthread_t *)malloc(sizeof(pthread_t) * num_threads);
     for (int i = 0; i < num_threads; i++) {
-        pthread_create(&queue->threads[i], NULL, DECL(worker_func), queue);
+        pthread_create(&ctx->threads[i], NULL, DECL(worker_func), ctx);
     }
 
     return 0;
@@ -95,8 +123,8 @@ int DECL(init_promise)(DECL(promise_t) * promise) {
     return 0;
 }
 
-DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg) {
-    DECL(promise_t)* promise = (DECL(promise_t)*)malloc(sizeof(DECL(promise_t)));
+DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void *(*callback)(void *), void *arg) {
+    DECL(promise_t) *promise = (DECL(promise_t) *)malloc(sizeof(DECL(promise_t)));
     DECL(init_promise)(promise);
 
     DECL(task_t)
@@ -110,10 +138,29 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
     LList_append(&ctx->queue, &task);
     pthread_mutex_unlock(&ctx->queue_mtx);
 
-    printf("sending off signal!\n");
+    sem_wait(&ctx->thread_available);
     pthread_cond_signal(&ctx->cv);
+    sem_post(&ctx->thread_available);
 
     return promise;
+}
+
+int DECL(destroy_queue)(DECL(thread_queue_t) * ctx) {
+    pthread_mutex_lock(&ctx->queue_mtx);
+    LList_empty(&ctx->queue);
+    int nthreads = ctx->num_threads;
+    ctx->num_threads = -1;
+    pthread_mutex_unlock(&ctx->queue_mtx);
+
+    pthread_cond_broadcast(&ctx->cv);
+
+    for (int i = 0; i < nthreads; i++) {
+        pthread_join(ctx->threads[i], NULL);
+    }
+
+    free(ctx->threads);
+
+    return 0;
 }
 
 #endif /* implementation */
