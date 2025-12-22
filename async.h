@@ -5,11 +5,10 @@
  * slightest
  *
  */
-#include <err.h>
-#include <errno.h>
+#ifndef ANNYMOOSE_ASYNC_H
+#define ANNYMOOSE_ASYNC_H
 #include <pthread.h>
 #include <semaphore.h>
-#include <stdio.h>
 
 #include "annylib.h"
 
@@ -25,7 +24,7 @@
 /* why does C require three macros for this? hell if i know. */
 
 typedef struct thread_queue {
-    pthread_t *threads;
+    pthread_t* threads;
     pthread_mutex_t queue_mtx;
     sem_t thread_available; /* this is really ugly and there's probably a better way to do this */
     LList_t queue;
@@ -34,34 +33,39 @@ typedef struct thread_queue {
 } DECL(thread_queue_t);
 
 typedef struct promise {
-    void *data;
+    void* data;
     sem_t done; /* should be waited before accessing data */
 } DECL(promise_t);
 
 typedef struct task {
-    void *args;
-    void *(*callback)(void *);
+    void* args;
+    void* (*callback)(void*);
     DECL(promise_t) * promise;
 } DECL(task_t);
 
 int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads);
 int DECL(destroy_queue)(DECL(thread_queue_t) * ctx);
 
-inline void *DECL(worker_func)(void *arg);
+void* DECL(__worker_func)(void* arg);
 int DECL(init_promise)(DECL(promise_t) * promise);
 
-DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void *(*callback)(void *), void *arg);
-inline void *DECL(await)(DECL(promise_t) * promise);
+DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg);
+inline void* DECL(await)(DECL(promise_t) * promise);
 
 /*
  *
  */
 
+#endif /* ANNYMOOSE_ASYNC_H */
+
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
+#include <err.h>
+#include <errno.h>
+#include <stdio.h>
 /* todo: handle and check errors for all funcs */
 
-inline void *DECL(worker_func)(void *arg) {
-    DECL(thread_queue_t) *state = (DECL(thread_queue_t) *)arg;
+void* DECL(__worker_func)(void* arg) {
+    DECL(thread_queue_t)* state = (DECL(thread_queue_t)*)arg;
 
     fprintf(stderr, "Thread started!!\n");
     pthread_mutex_lock(&state->queue_mtx);
@@ -71,7 +75,7 @@ inline void *DECL(worker_func)(void *arg) {
         if (pthread_cond_wait(&state->cv, &state->queue_mtx) != 0) err(EXIT_FAILURE, "failed waiting on CV");
 
         while (state->queue.length > 0) {
-            DECL(task_t) *task = (DECL(task_t) *)LList_pop_head(&state->queue);
+            DECL(task_t)* task = (DECL(task_t)*)LList_pop_head(&state->queue);
             pthread_mutex_unlock(&state->queue_mtx);
 
             printf("doing work!\n");
@@ -93,9 +97,9 @@ inline void *DECL(worker_func)(void *arg) {
     return NULL;
 }
 
-inline void *DECL(await)(DECL(promise_t) * promise) {
+inline void* DECL(await)(DECL(promise_t) * promise) {
     sem_wait(&promise->done);
-    void *ret_val = promise->data;
+    void* ret_val = promise->data;
     free(promise);
 
     return ret_val;
@@ -108,9 +112,9 @@ int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
     ctx->num_threads = num_threads;
     LList_init(&ctx->queue, sizeof(DECL(task_t)), NULL);
 
-    ctx->threads = (pthread_t *)malloc(sizeof(pthread_t) * num_threads);
+    ctx->threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
     for (int i = 0; i < num_threads; i++) {
-        pthread_create(&ctx->threads[i], NULL, DECL(worker_func), ctx);
+        pthread_create(&ctx->threads[i], NULL, DECL(__worker_func), ctx);
     }
 
     return 0;
@@ -123,8 +127,8 @@ int DECL(init_promise)(DECL(promise_t) * promise) {
     return 0;
 }
 
-DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void *(*callback)(void *), void *arg) {
-    DECL(promise_t) *promise = (DECL(promise_t) *)malloc(sizeof(DECL(promise_t)));
+DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg) {
+    DECL(promise_t)* promise = (DECL(promise_t)*)malloc(sizeof(DECL(promise_t)));
     DECL(init_promise)(promise);
 
     DECL(task_t)
@@ -138,9 +142,11 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void *(*callback
     LList_append(&ctx->queue, &task);
     pthread_mutex_unlock(&ctx->queue_mtx);
 
-    sem_wait(&ctx->thread_available);
+    for (int i = 0; i < ctx->num_threads; i++)
+        sem_wait(&ctx->thread_available); /* hack: this sucks (surely if all threads have posted the semaphore there is at LEAST one that's
+                                             either working or waiting on the cv.) */
     pthread_cond_signal(&ctx->cv);
-    sem_post(&ctx->thread_available);
+    for (int i = 0; i < ctx->num_threads; i++) sem_post(&ctx->thread_available);
 
     return promise;
 }
