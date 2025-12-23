@@ -49,7 +49,7 @@ int DECL(destroy_queue)(DECL(thread_queue_t) * ctx);
 int DECL(init_promise)(DECL(promise_t) * promise);
 
 DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg);
-inline void* DECL(await)(DECL(promise_t) * promise);
+void* DECL(await)(DECL(promise_t) * promise);
 
 /*
  *
@@ -97,11 +97,11 @@ void* DECL(__worker_func)(void* arg) {
     return NULL;
 }
 
-/* todo: figure out something to support errno while allowing awaits normally */
-inline void* DECL(await)(DECL(promise_t) * promise) {
+void* DECL(await)(DECL(promise_t) * promise) {
     sem_wait(&promise->done);
     sem_destroy(&promise->done);
     void* ret_val = promise->data;
+    errno = promise->err_code;
     free(promise);
 
     return ret_val;
