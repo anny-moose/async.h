@@ -64,12 +64,9 @@ inline void* DECL(await)(DECL(promise_t) * promise);
 #include <err.h>
 #include <errno.h>
 #include <stdio.h>
-/* todo: handle and check errors for all funcs */
-
 void* DECL(__worker_func)(void* arg) {
     DECL(thread_queue_t)* state = (DECL(thread_queue_t)*)arg;
 
-    fprintf(stderr, "Thread started!!\n");
     pthread_mutex_lock(&state->queue_mtx);
 
     sem_post(&state->thread_available);
@@ -96,14 +93,13 @@ void* DECL(__worker_func)(void* arg) {
         }
     }
 
-    fprintf(stderr, "Thread exiting!!\n");
-
     return NULL;
 }
 
 /* todo: figure out something to support errno while allowing awaits normally */
 inline void* DECL(await)(DECL(promise_t) * promise) {
     sem_wait(&promise->done);
+    sem_destroy(&promise->done);
     void* ret_val = promise->data;
     free(promise);
 
@@ -111,30 +107,51 @@ inline void* DECL(await)(DECL(promise_t) * promise) {
 }
 
 int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
-    pthread_mutex_init(&ctx->queue_mtx, NULL);
-    pthread_cond_init(&ctx->cv, NULL);
-    sem_init(&ctx->thread_available, 0, 0);
+    if (pthread_mutex_init(&ctx->queue_mtx, NULL)) goto fail;
+    if (pthread_cond_init(&ctx->cv, NULL)) goto fail_post_mutex;
+    if (sem_init(&ctx->thread_available, 0, 0)) goto fail_post_cond;
+
     ctx->num_threads = num_threads;
     Queue_init(&ctx->queue, sizeof(DECL(task_t)), NULL);
 
     ctx->threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
-    for (int i = 0; i < num_threads; i++) {
-        pthread_create(&ctx->threads[i], NULL, DECL(__worker_func), ctx);
+    if (!ctx->threads) goto fail_post_sem;
+
+    int initialized_threads;
+    for (initialized_threads = 0; initialized_threads < num_threads;) {
+        if (!pthread_create(&ctx->threads[initialized_threads], NULL, DECL(__worker_func), ctx))
+            initialized_threads++;
+        else
+            goto fail_post_threads;
     }
 
     return 0;
+
+fail_post_threads:
+    for (int i = 0; i < initialized_threads; i++) pthread_cancel(ctx->threads[i]);
+    free(ctx->threads);
+fail_post_sem:
+    sem_destroy(&ctx->thread_available);
+fail_post_cond:
+    pthread_cond_destroy(&ctx->cv);
+fail_post_mutex:
+    pthread_mutex_destroy(&ctx->queue_mtx);
+fail:
+    return -1;
 }
 
 int DECL(init_promise)(DECL(promise_t) * promise) {
     promise->data = NULL;
-    sem_init(&promise->done, 0, 0);
+    if (sem_init(&promise->done, 0, 0)) return -1;
 
     return 0;
 }
 
 DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg) {
     DECL(promise_t)* promise = (DECL(promise_t)*)malloc(sizeof(DECL(promise_t)));
-    DECL(init_promise)(promise);
+    if (!promise) goto fail;
+
+    if (DECL(init_promise)(promise)) goto fail_post_alloc;
 
     DECL(task_t)
     task = {
@@ -144,7 +161,7 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
     };
 
     pthread_mutex_lock(&ctx->queue_mtx);
-    Queue_append(&ctx->queue, &task);
+    if (Queue_append(&ctx->queue, &task)) goto fail_post_promise_init;
     pthread_mutex_unlock(&ctx->queue_mtx);
 
     for (int i = 0; i < ctx->num_threads; i++)
@@ -154,6 +171,13 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
     for (int i = 0; i < ctx->num_threads; i++) sem_post(&ctx->thread_available);
 
     return promise;
+
+fail_post_promise_init:
+    sem_destroy(&promise->done);
+fail_post_alloc:
+    free(promise);
+fail:
+    return NULL;
 }
 
 int DECL(destroy_queue)(DECL(thread_queue_t) * ctx) {
