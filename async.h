@@ -46,7 +46,6 @@ typedef struct task {
 int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads);
 int DECL(destroy_queue)(DECL(thread_queue_t) * ctx);
 
-void* DECL(__worker_func)(void* arg);
 int DECL(init_promise)(DECL(promise_t) * promise);
 
 DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg);
@@ -61,7 +60,12 @@ inline void* DECL(await)(DECL(promise_t) * promise);
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
 #include <err.h>
 #include <errno.h>
-#include <stdio.h>
+
+void DECL(__free_func)(void* task) {
+    DECL(task_t)* t = (DECL(task_t)*)task;
+
+    free(t->promise);
+}
 
 void* DECL(__worker_func)(void* arg) {
     DECL(thread_queue_t)* state = (DECL(thread_queue_t)*)arg;
@@ -74,7 +78,6 @@ void* DECL(__worker_func)(void* arg) {
             pthread_mutex_unlock(&state->queue_mtx);
             if (!task) break;
 
-            printf("doing work!\n");
             task->promise->data = task->callback(task->args);
             task->promise->err_code = errno;
             sem_post(&task->promise->done);
@@ -109,7 +112,7 @@ int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
     if (pthread_cond_init(&ctx->cv, NULL)) goto fail_post_mutex;
 
     ctx->num_threads = num_threads;
-    Queue_init(&ctx->queue, sizeof(DECL(task_t)), NULL);
+    Queue_init(&ctx->queue, sizeof(DECL(task_t)), DECL(__free_func));
 
     ctx->threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
     if (!ctx->threads) goto fail_post_cond;
