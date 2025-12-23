@@ -10,7 +10,7 @@
 #include <pthread.h>
 #include <semaphore.h>
 
-#include "annylib.h"
+#include "queue.h"
 
 /* define SYMBOL_APPEND before including to resolve name clashing */
 
@@ -27,7 +27,7 @@ typedef struct thread_queue {
     pthread_t* threads;
     pthread_mutex_t queue_mtx;
     sem_t thread_available; /* this is really ugly and there's probably a better way to do this */
-    LList_t queue;
+    Queue_t queue;
     pthread_cond_t cv;
     int num_threads;
 } DECL(thread_queue_t);
@@ -58,6 +58,7 @@ inline void* DECL(await)(DECL(promise_t) * promise);
 
 #endif /* ANNYMOOSE_ASYNC_H */
 
+#define ANNYMOOSE_ASYNC_IMPLEMENTATION
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
 #include <err.h>
 #include <errno.h>
@@ -75,8 +76,9 @@ void* DECL(__worker_func)(void* arg) {
         if (pthread_cond_wait(&state->cv, &state->queue_mtx) != 0) err(EXIT_FAILURE, "failed waiting on CV");
 
         while (state->queue.length > 0) {
-            DECL(task_t)* task = (DECL(task_t)*)LList_pop_head(&state->queue);
+            DECL(task_t)* task = (DECL(task_t)*)Queue_pop_head(&state->queue);
             pthread_mutex_unlock(&state->queue_mtx);
+            if (!task) break;
 
             printf("doing work!\n");
             task->promise->data = task->callback(task->args);
@@ -110,7 +112,7 @@ int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
     pthread_cond_init(&ctx->cv, NULL);
     sem_init(&ctx->thread_available, 0, 0);
     ctx->num_threads = num_threads;
-    LList_init(&ctx->queue, sizeof(DECL(task_t)), NULL);
+    Queue_init(&ctx->queue, sizeof(DECL(task_t)), NULL);
 
     ctx->threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
     for (int i = 0; i < num_threads; i++) {
@@ -139,7 +141,7 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
     };
 
     pthread_mutex_lock(&ctx->queue_mtx);
-    LList_append(&ctx->queue, &task);
+    Queue_append(&ctx->queue, &task);
     pthread_mutex_unlock(&ctx->queue_mtx);
 
     for (int i = 0; i < ctx->num_threads; i++)
@@ -153,7 +155,7 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
 
 int DECL(destroy_queue)(DECL(thread_queue_t) * ctx) {
     pthread_mutex_lock(&ctx->queue_mtx);
-    LList_empty(&ctx->queue);
+    Queue_clear(&ctx->queue);
     int nthreads = ctx->num_threads;
     ctx->num_threads = -1;
     pthread_mutex_unlock(&ctx->queue_mtx);
