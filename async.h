@@ -58,11 +58,11 @@ inline void* DECL(await)(DECL(promise_t) * promise);
 
 #endif /* ANNYMOOSE_ASYNC_H */
 
-#define ANNYMOOSE_ASYNC_IMPLEMENTATION
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
 #include <err.h>
 #include <errno.h>
 #include <stdio.h>
+
 void* DECL(__worker_func)(void* arg) {
     DECL(thread_queue_t)* state = (DECL(thread_queue_t)*)arg;
 
