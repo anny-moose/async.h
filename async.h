@@ -34,6 +34,7 @@ typedef struct thread_queue {
 
 typedef struct promise {
     void* data;
+    int err_code;
     sem_t done; /* should be waited before accessing data */
 } DECL(promise_t);
 
@@ -82,6 +83,7 @@ void* DECL(__worker_func)(void* arg) {
 
             printf("doing work!\n");
             task->promise->data = task->callback(task->args);
+            task->promise->err_code = errno;
             sem_post(&task->promise->done);
 
             free(task);
@@ -99,6 +101,7 @@ void* DECL(__worker_func)(void* arg) {
     return NULL;
 }
 
+/* todo: figure out something to support errno while allowing awaits normally */
 inline void* DECL(await)(DECL(promise_t) * promise) {
     sem_wait(&promise->done);
     void* ret_val = promise->data;
