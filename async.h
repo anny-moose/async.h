@@ -26,7 +26,6 @@
 typedef struct thread_queue {
     pthread_t* threads;
     pthread_mutex_t queue_mtx;
-    sem_t thread_available; /* this is really ugly and there's probably a better way to do this */
     Queue_t queue;
     pthread_cond_t cv;
     int num_threads;
@@ -69,10 +68,7 @@ void* DECL(__worker_func)(void* arg) {
 
     pthread_mutex_lock(&state->queue_mtx);
 
-    sem_post(&state->thread_available);
     while (1) {
-        if (pthread_cond_wait(&state->cv, &state->queue_mtx) != 0) err(EXIT_FAILURE, "failed waiting on CV");
-
         while (state->queue.length > 0) {
             DECL(task_t)* task = (DECL(task_t)*)Queue_pop_head(&state->queue);
             pthread_mutex_unlock(&state->queue_mtx);
@@ -91,6 +87,8 @@ void* DECL(__worker_func)(void* arg) {
             pthread_mutex_unlock(&state->queue_mtx);
             break;
         }
+
+        if (pthread_cond_wait(&state->cv, &state->queue_mtx) != 0) err(EXIT_FAILURE, "failed waiting on CV");
     }
 
     return NULL;
@@ -109,13 +107,12 @@ inline void* DECL(await)(DECL(promise_t) * promise) {
 int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
     if (pthread_mutex_init(&ctx->queue_mtx, NULL)) goto fail;
     if (pthread_cond_init(&ctx->cv, NULL)) goto fail_post_mutex;
-    if (sem_init(&ctx->thread_available, 0, 0)) goto fail_post_cond;
 
     ctx->num_threads = num_threads;
     Queue_init(&ctx->queue, sizeof(DECL(task_t)), NULL);
 
     ctx->threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
-    if (!ctx->threads) goto fail_post_sem;
+    if (!ctx->threads) goto fail_post_cond;
 
     int initialized_threads;
     for (initialized_threads = 0; initialized_threads < num_threads;) {
@@ -130,8 +127,6 @@ int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
 fail_post_threads:
     for (int i = 0; i < initialized_threads; i++) pthread_cancel(ctx->threads[i]);
     free(ctx->threads);
-fail_post_sem:
-    sem_destroy(&ctx->thread_available);
 fail_post_cond:
     pthread_cond_destroy(&ctx->cv);
 fail_post_mutex:
@@ -164,11 +159,7 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
     if (Queue_append(&ctx->queue, &task)) goto fail_post_promise_init;
     pthread_mutex_unlock(&ctx->queue_mtx);
 
-    for (int i = 0; i < ctx->num_threads; i++)
-        sem_wait(&ctx->thread_available); /* hack: this sucks (surely if all threads have posted the semaphore there is at LEAST one that's
-                                             either working or waiting on the cv.) */
     pthread_cond_signal(&ctx->cv);
-    for (int i = 0; i < ctx->num_threads; i++) sem_post(&ctx->thread_available);
 
     return promise;
 
