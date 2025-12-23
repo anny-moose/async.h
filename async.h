@@ -62,6 +62,7 @@ void* DECL(await)(DECL(promise_t) * promise);
 #include <errno.h>
 
 void DECL(__free_func)(void* task) {
+    if (task == NULL) return;
     DECL(task_t)* t = (DECL(task_t)*)task;
 
     free(t->promise);
@@ -108,6 +109,11 @@ void* DECL(await)(DECL(promise_t) * promise) {
 }
 
 int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
+    if (ctx == NULL || num_threads < 1) {
+        errno = EINVAL;
+        goto fail;
+    }
+
     if (pthread_mutex_init(&ctx->queue_mtx, NULL)) goto fail;
     if (pthread_cond_init(&ctx->cv, NULL)) goto fail_post_mutex;
 
@@ -139,6 +145,11 @@ fail:
 }
 
 int DECL(init_promise)(DECL(promise_t) * promise) {
+    if (promise == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
     promise->data = NULL;
     if (sem_init(&promise->done, 0, 0)) return -1;
 
@@ -146,6 +157,11 @@ int DECL(init_promise)(DECL(promise_t) * promise) {
 }
 
 DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg) {
+    if (ctx == NULL || callback == NULL) {
+        errno = EINVAL;
+        goto fail;
+    }
+
     DECL(promise_t)* promise = (DECL(promise_t)*)malloc(sizeof(DECL(promise_t)));
     if (!promise) goto fail;
 
@@ -175,6 +191,11 @@ fail:
 }
 
 int DECL(destroy_queue)(DECL(thread_queue_t) * ctx) {
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
     pthread_mutex_lock(&ctx->queue_mtx);
     Queue_clear(&ctx->queue);
     int nthreads = ctx->num_threads;
