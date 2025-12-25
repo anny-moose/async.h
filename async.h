@@ -177,7 +177,10 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
     };
 
     pthread_mutex_lock(&ctx->queue_mtx);
-    if (Queue_append(&ctx->queue, &task)) goto fail_post_promise_init;
+    if (Queue_append(&ctx->queue, &task)) {
+        pthread_mutex_unlock(&ctx->queue_mtx);
+        goto fail_post_promise_init;
+    };
     pthread_mutex_unlock(&ctx->queue_mtx);
 
     pthread_cond_signal(&ctx->cv);
