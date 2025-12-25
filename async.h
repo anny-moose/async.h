@@ -77,13 +77,15 @@ void* DECL(__worker_func)(void* arg) {
         while (state->queue.length > 0) {
             DECL(task_t)* task = (DECL(task_t)*)Queue_pop_head(&state->queue);
             pthread_mutex_unlock(&state->queue_mtx);
-            if (!task) break;
 
-            task->promise->data = task->callback(task->args);
-            task->promise->err_code = errno;
-            sem_post(&task->promise->done);
+            if (task) {
+                task->promise->data = task->callback(task->args);
+                task->promise->err_code = errno;
+                sem_post(&task->promise->done);
 
-            free(task);
+                free(task);
+            }
+
             pthread_mutex_lock(&state->queue_mtx);
         }
 
