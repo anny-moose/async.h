@@ -247,6 +247,9 @@ int DECL(destroy_queue)(DECL(thread_queue_t) * ctx) {
 
     free(ctx->threads);
 
+    pthread_cond_destroy(&ctx->cv);
+    pthread_mutex_destroy(&ctx->queue_mtx);
+
     return 0;
 }
 
