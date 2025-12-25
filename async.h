@@ -1,10 +1,3 @@
-/*
- *
- * If you are reading this beast i highly advise you to expand all preprocessor
- * macros beforehand, as in this file they don't help readibility in the
- * slightest
- *
- */
 #ifndef ANNYMOOSE_ASYNC_H
 #define ANNYMOOSE_ASYNC_H
 #include <pthread.h>
@@ -13,7 +6,6 @@
 #include "queue.h"
 
 /* define SYMBOL_APPEND before including to resolve name clashing */
-
 #ifndef SYMBOL_APPEND
 #define SYMBOL_APPEND
 #endif
@@ -21,7 +13,7 @@
 #define GLUE(pref, sym) pref##sym
 #define JOIN(pref, sym) GLUE(pref, sym)
 #define DECL(sym) JOIN(SYMBOL_APPEND, sym)
-/* why does C require three macros for this? hell if i know. */
+/* i really like the fact that this requires THREE macros instead of one or two */
 
 typedef struct thread_queue {
     pthread_t* threads;
@@ -43,22 +35,61 @@ typedef struct task {
     DECL(promise_t) * promise;
 } DECL(task_t);
 
+/**
+ * Initializes a thread queue with n threads.
+ * @param ctx Pointer to the queue to initialize. Expected to not be previously initialized.
+ * @param num_threads The number of threads to be started. If for whatever reason they can't be started, the queue is not initialized.
+ * @returns 0 on success, -1 if any step fails
+ *
+ * ERRORS:
+ * EINVAL - Invalid parameters (NULL ctx or num_threads < 1)
+ * See man pages pthread_cond_init(3), pthread_mutex_init(3), malloc(3), pthread_create(3) for other possible errors.
+ */
 int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads);
+
+/**
+ * Uninitializes a thread queue.
+ * @param ctx Pointer to an initialized thread queue
+ * @returns 0 on success, -1 on error
+ *
+ * ERRORS:
+ * EINVAL - Invalid parameter (NULL ctx)
+ *
+ * All the promises that belong to this queue and haven't been previously completed are invalidated. Awaiting on them will result in
+ * undefined behavior.
+ */
 int DECL(destroy_queue)(DECL(thread_queue_t) * ctx);
 
-int DECL(init_promise)(DECL(promise_t) * promise);
-
-DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg);
-void* DECL(await)(DECL(promise_t) * promise);
-
-/*
+/**
+ * Submits a task to the thread queue
+ * @param ctx Pointer to an initialized thread queue
+ * @param callback The function that the thread will execute. Any function you would call pthread_create with would work.
+ * @param arg The argument that will be passed to the callback function
+ * @returns 0 on success, -1 on error
  *
+ * ERRORS:
+ * EINVAL - Invalid parameter (NULL ctx or NULL callback)
+ * See man pages malloc(3), sem_init(3) for other possible errors
  */
+DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg);
+
+/**
+ * Blocks on a promise until it is ready to be consumed, then consumes it.
+ * @param promise The promise to be awaited.
+ * @returns The value that was returned by the promise.
+ *
+ * ERRORS:
+ * This function doesn't define errors. The calling thread's errno is set to the value of errno in the thread executing the promise.
+ *
+ * If the function is called with NULL or an invalid promise, the resulting behavior will be undefined.
+ * The promise being "consumed" means that it should no longer be used after await, as it is de-allocated.
+ */
+void* DECL(await)(DECL(promise_t) * promise);
 
 #endif /* ANNYMOOSE_ASYNC_H */
 
+// #define ANNYMOOSE_ASYNC_IMPLEMENTATION /* syntax highlighting my beloved */
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
-#include <err.h>
 #include <errno.h>
 
 void DECL(__free_func)(void* task) {
@@ -94,7 +125,7 @@ void* DECL(__worker_func)(void* arg) {
             break;
         }
 
-        if (pthread_cond_wait(&state->cv, &state->queue_mtx) != 0) err(EXIT_FAILURE, "failed waiting on CV");
+        pthread_cond_wait(&state->cv, &state->queue_mtx);
     }
 
     return NULL;
@@ -104,7 +135,8 @@ void* DECL(await)(DECL(promise_t) * promise) {
     sem_wait(&promise->done);
     sem_destroy(&promise->done);
     void* ret_val = promise->data;
-    errno = promise->err_code;
+    errno =
+        promise->err_code; /* I'm not really sure whether i like this, as this effectively disallows adding any checks to this function */
     free(promise);
 
     return ret_val;
@@ -146,7 +178,7 @@ fail:
     return -1;
 }
 
-int DECL(init_promise)(DECL(promise_t) * promise) {
+int DECL(__init_promise)(DECL(promise_t) * promise) {
     if (promise == NULL) {
         errno = EINVAL;
         return -1;
@@ -167,7 +199,7 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
     DECL(promise_t)* promise = (DECL(promise_t)*)malloc(sizeof(DECL(promise_t)));
     if (!promise) goto fail;
 
-    if (DECL(init_promise)(promise)) goto fail_post_alloc;
+    if (DECL(__init_promise)(promise)) goto fail_post_alloc;
 
     DECL(task_t)
     task = {
