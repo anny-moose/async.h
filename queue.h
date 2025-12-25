@@ -7,13 +7,12 @@
 #define ANNYMOOSE_QUEUE_ERROR -1
 #define ANNYMOOSE_QUEUE_SUCCESS 0
 
-typedef struct LListNode {
-    struct LListNode* prev;
+typedef struct QueueNode {
     void* data;
-    struct LListNode* next;
+    struct QueueNode* next;
 } QueueNode_t;
 
-typedef struct LList {
+typedef struct {
     QueueNode_t* head;
     QueueNode_t* tail;
     size_t length;
@@ -61,59 +60,14 @@ static inline int Queue_append(Queue_t* queue, const void* data) {
 
     memcpy(node->data, data, queue->node_data_size);
 
-    if (queue->tail != NULL) {
-        node->prev = queue->tail;
+    if (queue->tail)
         queue->tail->next = node;
-        node->next = NULL;
-        queue->tail = node;
-    } else {
+    else
         queue->head = node;
-        node->prev = NULL;
-        node->next = NULL;
-        queue->tail = node;
-    }
+
+    node->next = NULL;
+    queue->tail = node;
     queue->length++;
-
-    return ANNYMOOSE_QUEUE_SUCCESS;
-}
-
-/**
- * Erases a node from the queue. Does not check whether node is inside the queue.
- * @param queue The queue to erase node from.
- * @param node The node that should be erased.
- * @returns 0 on success, sets errno and returns -1 otherwise.
- */
-static inline int Queue_erase_node(Queue_t* queue, QueueNode_t* node) {
-    if (!queue || !node) {
-        errno = EINVAL;
-        return ANNYMOOSE_QUEUE_ERROR;
-    }
-
-    if (node->data) {
-        if (queue->free_data) queue->free_data(node->data);
-        free(node->data);
-    }
-
-    if (!node->prev) {
-        /* we're at head */
-        queue->head = node->next; /* becomes either valid ptr or NULL */
-        if (node->next) {
-            node->next->prev = NULL;
-        } else {
-            queue->tail = NULL;
-        }
-    } else if (!node->next) {
-        /* we're at tail */
-        queue->tail = node->prev;
-        node->prev->next = NULL;
-    } else {
-        node->prev->next = node->next;
-        node->next->prev = node->prev;
-    }
-
-    free(node);
-
-    queue->length--;
 
     return ANNYMOOSE_QUEUE_SUCCESS;
 }
@@ -131,7 +85,22 @@ static inline int Queue_clear(Queue_t* queue) {
 
     if (queue->length == 0) return ANNYMOOSE_QUEUE_SUCCESS; /* list already empty */
 
-    while (Queue_erase_node(queue, queue->head) == ANNYMOOSE_QUEUE_SUCCESS);
+    QueueNode_t *current_node = queue->head, *next_node = current_node;
+    while (next_node) {
+        current_node = next_node;
+        next_node = current_node->next;
+
+        if (current_node->data) {
+            if (queue->free_data) queue->free_data(current_node->data);
+            free(current_node->data);
+        }
+
+        free(current_node);
+        queue->length--;
+    }
+
+    queue->head = NULL;
+    queue->tail = NULL;
 
     return ANNYMOOSE_QUEUE_SUCCESS;
 }
@@ -147,21 +116,15 @@ static inline void* Queue_pop_head(Queue_t* queue) {
         return NULL;
     }
 
-    void* ret = queue->head->data;
-
-    QueueNode_t* node = queue->head;
+    QueueNode_t* head = queue->head;
+    void* ret = head->data;
 
     queue->head = queue->head->next;
     queue->length--;
-    if (!queue->head) { /* sole element case */
+    if (!queue->head) /* sole element case */
         queue->tail = NULL;
-        goto end;
-    }
 
-    queue->head->prev = NULL;
-
-end:
-    free(node);
+    free(head);
     return ret;
 }
 
