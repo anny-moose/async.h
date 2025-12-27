@@ -45,7 +45,7 @@ typedef struct task {
  * EINVAL - Invalid parameters (NULL ctx or num_threads < 1)
  * See man pages pthread_cond_init(3), pthread_mutex_init(3), malloc(3), pthread_create(3) for other possible errors.
  */
-int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads);
+int DECL(init_tq)(DECL(thread_queue_t) * ctx, int num_threads);
 
 /**
  * Uninitializes a thread queue.
@@ -58,7 +58,7 @@ int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads);
  * All the promises that belong to this queue and haven't been previously completed are invalidated. Awaiting on them will result in
  * undefined behavior.
  */
-int DECL(destroy_queue)(DECL(thread_queue_t) * ctx);
+int DECL(destroy_tq)(DECL(thread_queue_t) * ctx);
 
 /**
  * Submits a task to the thread queue
@@ -134,18 +134,7 @@ void* DECL(__worker_func)(void* arg) {
     return NULL;
 }
 
-void* DECL(await)(DECL(promise_t) * promise) {
-    sem_wait(&promise->done);
-    sem_destroy(&promise->done);
-    void* ret_val = promise->data;
-    errno =
-        promise->err_code; /* I'm not really sure whether i like this, as this effectively disallows adding any checks to this function */
-    free(promise);
-
-    return ret_val;
-}
-
-int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
+int DECL(init_tq)(DECL(thread_queue_t) * ctx, int num_threads) {
     if (ctx == NULL || num_threads < 1) {
         errno = EINVAL;
         goto fail;
@@ -237,7 +226,18 @@ fail:
     return NULL;
 }
 
-int DECL(destroy_queue)(DECL(thread_queue_t) * ctx) {
+void* DECL(await)(DECL(promise_t) * promise) {
+    sem_wait(&promise->done);
+    sem_destroy(&promise->done);
+    void* ret_val = promise->data;
+    errno =
+        promise->err_code; /* I'm not really sure whether i like this, as this effectively disallows adding any checks to this function */
+    free(promise);
+
+    return ret_val;
+}
+
+int DECL(destroy_tq)(DECL(thread_queue_t) * ctx) {
     if (ctx == NULL) {
         errno = EINVAL;
         return -1;
