@@ -18,7 +18,7 @@
 typedef struct thread_queue {
     pthread_t* threads;
     pthread_mutex_t queue_mtx;
-    Queue_t queue;
+    queue_t queue;
     pthread_cond_t cv;
     int num_threads;
 } DECL(thread_queue_t);
@@ -93,6 +93,9 @@ void* DECL(await)(DECL(promise_t) * promise);
 #include <errno.h>
 #include <signal.h>
 
+#define ANNYMOOSE_QUEUE_IMPLEMENTATION /* assume queue implementation is also required */
+#include "queue.h"
+
 void DECL(__free_func)(void* task) {
     if (task == NULL) return;
     DECL(task_t)* t = (DECL(task_t)*)task;
@@ -107,7 +110,7 @@ void* DECL(__worker_func)(void* arg) {
 
     while (1) {
         while (state->queue.length > 0) {
-            DECL(task_t)* task = (DECL(task_t)*)Queue_pop_head(&state->queue);
+            DECL(task_t)* task = (DECL(task_t)*)queue_pop_head(&state->queue);
             pthread_mutex_unlock(&state->queue_mtx);
 
             if (task) {
@@ -144,7 +147,7 @@ int DECL(init_tq)(DECL(thread_queue_t) * ctx, int num_threads) {
     if (pthread_cond_init(&ctx->cv, NULL)) goto fail_post_mutex;
 
     ctx->num_threads = num_threads;
-    Queue_init(&ctx->queue, sizeof(DECL(task_t)), DECL(__free_func));
+    queue_init(&ctx->queue, sizeof(DECL(task_t)), DECL(__free_func));
 
     ctx->threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
     if (!ctx->threads) goto fail_post_cond;
@@ -208,7 +211,7 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
     };
 
     pthread_mutex_lock(&ctx->queue_mtx);
-    if (Queue_append(&ctx->queue, &task)) {
+    if (queue_append(&ctx->queue, &task)) {
         pthread_mutex_unlock(&ctx->queue_mtx);
         goto fail_post_promise_init;
     };
@@ -244,7 +247,7 @@ int DECL(destroy_tq)(DECL(thread_queue_t) * ctx) {
     }
 
     pthread_mutex_lock(&ctx->queue_mtx);
-    Queue_clear(&ctx->queue);
+    queue_clear(&ctx->queue);
     int nthreads = ctx->num_threads;
     ctx->num_threads = -1;
     pthread_mutex_unlock(&ctx->queue_mtx);
