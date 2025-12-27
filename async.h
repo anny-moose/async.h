@@ -91,6 +91,7 @@ void* DECL(await)(DECL(promise_t) * promise);
 // #define ANNYMOOSE_ASYNC_IMPLEMENTATION /* syntax highlighting my beloved */
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
 #include <errno.h>
+#include <signal.h>
 
 void DECL(__free_func)(void* task) {
     if (task == NULL) return;
@@ -115,6 +116,8 @@ void* DECL(__worker_func)(void* arg) {
                 sem_post(&task->promise->done);
 
                 free(task);
+
+                /* maybe should restore sigmask in case it gets changed by the task */
             }
 
             pthread_mutex_lock(&state->queue_mtx);
@@ -157,6 +160,10 @@ int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
     ctx->threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
     if (!ctx->threads) goto fail_post_cond;
 
+    sigset_t fullset, oldset;
+    sigfillset(&fullset);
+    pthread_sigmask(SIG_SETMASK, &fullset, &oldset); /* block all signals, as handling them in the worker threads would be troublesome */
+
     int initialized_threads;
     for (initialized_threads = 0; initialized_threads < num_threads;) {
         if (!pthread_create(&ctx->threads[initialized_threads], NULL, DECL(__worker_func), ctx))
@@ -165,9 +172,12 @@ int DECL(init_queue)(DECL(thread_queue_t) * ctx, int num_threads) {
             goto fail_post_threads;
     }
 
+    pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+
     return 0;
 
 fail_post_threads:
+    pthread_sigmask(SIG_SETMASK, &oldset, NULL);
     for (int i = 0; i < initialized_threads; i++) pthread_cancel(ctx->threads[i]);
     free(ctx->threads);
 fail_post_cond:
