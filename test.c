@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#define SYMBOL_APPEND
 #define ANNYMOOSE_ASYNC_IMPLEMENTATION
 #include "async.h"
 
@@ -15,7 +14,7 @@ int main(void) {
     thread_queue_t thr_q;
 
     // init_queue(&thr_q, 1);
-    init_queue(&thr_q, 6);
+    init_tq(&thr_q, 6);
 
     printf("submitting...\n");
 
@@ -34,7 +33,7 @@ int main(void) {
 
     for (int i = 0; i < 4; i++) printf("Done! promise %d: %ld\n", i, (long)await(promises[i]));
 
-    destroy_queue(&thr_q);
+    destroy_tq(&thr_q);
 
     return 0;
 }
