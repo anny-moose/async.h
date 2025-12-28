@@ -135,7 +135,7 @@ int queue_append(queue_t* queue, const void* data) {
 }
 
 /* unsafe deleter */
-queue_node_t* __queue_delete_node(queue_t* queue, queue_node_t* prev) {
+static inline queue_node_t* __queue_delete_node(queue_t* queue, queue_node_t* prev) {
     queue_node_t* node = prev ? prev->next : queue->head;
 
     if (!node) return NULL;

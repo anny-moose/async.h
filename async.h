@@ -76,15 +76,31 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
 /**
  * Blocks on a promise until it is ready to be consumed, then consumes it.
  * @param promise The promise to be awaited.
- * @returns The value that was returned by the promise.
+ * @returns The value that was returned by the promise, or NULL if promise counldn't be consumed
  *
  * ERRORS:
- * This function doesn't define errors. The calling thread's errno is set to the value of errno in the thread executing the promise.
+ * EINTR - A signal interrupted this function.
+ * If consumption succeeds, the calling thread's errno is set to the value of errno in the thread that executed the promise. This may result
+ * in overlapping errno codes, where if your promise also sets errno to EINTR and returns NULL, you can't differentiate between success and
+ * failure.
  *
  * If the function is called with NULL or an invalid promise, the resulting behavior will be undefined.
  * The promise being "consumed" means that it should no longer be used after await, as it is de-allocated.
  */
 void* DECL(await)(DECL(promise_t) * promise);
+
+/**
+ * Blocks on a promise until it is ready to be consumed or timeout is expired. The promise is consumed if timeout isn't reached
+ * @param promise The promise to be awaited.
+ * @param timeout The amount of time to be waited for at most. May be NULL to poll.
+ *
+ * See documentation for await for additional info.
+ *
+ * ADDITIONAL ERRORS:
+ * ETIMEDOUT - Promise could not be consumed before the timeout expired.
+ * EAGAIN - Promise could not be consumed immediatelly (in the case that timeout is NULL).
+ */
+void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* timeout);
 
 #endif /* ANNYMOOSE_ASYNC_H */
 
@@ -180,7 +196,7 @@ fail:
     return -1;
 }
 
-int DECL(__init_promise)(DECL(promise_t) * promise) {
+static inline int DECL(__init_promise)(DECL(promise_t) * promise) {
     if (promise == NULL) {
         errno = EINVAL;
         return -1;
@@ -229,15 +245,28 @@ fail:
     return NULL;
 }
 
-void* DECL(await)(DECL(promise_t) * promise) {
-    sem_wait(&promise->done);
+static inline void* DECL(__consume_promise)(DECL(promise_t) * promise) {
     sem_destroy(&promise->done);
     void* ret_val = promise->data;
-    errno =
-        promise->err_code; /* I'm not really sure whether i like this, as this effectively disallows adding any checks to this function */
+    errno = promise->err_code;
     free(promise);
 
     return ret_val;
+}
+
+void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* abstime) {
+    if (abstime) {
+        if (sem_timedwait(&promise->done, abstime)) return NULL;
+    } else {
+        if (sem_trywait(&promise->done)) return NULL;
+    }
+
+    return DECL(__consume_promise)(promise);
+}
+
+void* DECL(await)(DECL(promise_t) * promise) {
+    if (sem_wait(&promise->done)) return NULL;
+    return DECL(__consume_promise)(promise);
 }
 
 int DECL(destroy_tq)(DECL(thread_queue_t) * ctx) {
