@@ -102,6 +102,34 @@ void* DECL(await)(DECL(promise_t) * promise);
  */
 void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* timeout);
 
+/**
+ * Removes a task if a condition on a predicate succeeds.
+ * @param ctx The thread queue to remove the task from.
+ * @param pred The function that decides whether a task should be removed. Should return 0 if not, any non-zero value if yes.
+ * @returns The amounts of removed elements on success, -1 on failure.
+ *
+ * ERRORS:
+ * EINVAL - Invalid parameters (ctx or pred is NULL)
+ *
+ * Example of a predicate function:
+ *
+ * ~~~{.c}
+ * extern int work_function();
+ *
+ * int pred(const void* ptr) {
+ *     const task_t* task = (const task_t*)ptr;
+ *
+ *     if (task->callback == task) return 1; // remove task
+ *     return 0; // don't
+ * }
+ * ~~~
+ *
+ * Important notice:
+ * The promises of tasks removed are invalidated and should not be awaited.
+ * This function will not cancel any tasks that are ongoing, and those promises should still be collected.
+ */
+ssize_t DECL(remove_tasks)(DECL(thread_queue_t) * ctx, int (*pred)(const void*));
+
 #endif /* ANNYMOOSE_ASYNC_H */
 
 // #define ANNYMOOSE_ASYNC_IMPLEMENTATION /* syntax highlighting my beloved */
@@ -112,6 +140,8 @@ void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* timeou
 #define ANNYMOOSE_QUEUE_IMPLEMENTATION /* assume queue implementation is also required */
 #include "queue.h"
 
+/* perhaps this function should set the promise err code to ECANCELLED and allow it to be awaited instead of freeing, because right now it
+ * makes removing tasks a way more tedious task. */
 void DECL(__free_func)(void* task) {
     if (task == NULL) return;
     DECL(task_t)* t = (DECL(task_t)*)task;
@@ -243,6 +273,20 @@ fail_post_alloc:
     free(promise);
 fail:
     return NULL;
+}
+
+ssize_t DECL(remove_tasks)(DECL(thread_queue_t) * ctx, int (*pred)(const void*)) {
+    if (ctx == NULL || pred == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    pthread_mutex_lock(&ctx->queue_mtx);
+    /* life could be a dream if i could have the callback expect task_t* and cast it to a function that expects void* and it would just
+     * work, but no, the language doesn't allow that. i must require the user to manually cast void* to task_t* in their callbacks, even
+     * though it will always be task_t* in this case, which is sucky design. day ruined. */
+    ssize_t retval = queue_remove_if(&ctx->queue, pred);
+    pthread_mutex_unlock(&ctx->queue_mtx);
+    return retval;
 }
 
 static inline void* DECL(__consume_promise)(DECL(promise_t) * promise) {

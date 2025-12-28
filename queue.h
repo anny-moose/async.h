@@ -52,13 +52,13 @@ int queue_remove(queue_t* queue, queue_node_t* node);
  * Removes an nodes from a queue based on a condition.
  * @param queue The queue to remove the node(s) from.
  * @param callback The function that will be called to check whether the node should be removed. The function should return 0 if the node
- * shouldn't be removed and any non-zero value otherwise
+ * shouldn't be removed and any non-zero value otherwise.
  * @returns Count of deleted nodes on success, sets errno and returns -1 otherwise.
  *
  * ERRORS:
  * EINVAL - Invalid arguments. (queue or callback is NULL)
  */
-ssize_t queue_remove_if(queue_t* queue, int (*callback)(const queue_node_t*));
+ssize_t queue_remove_if(queue_t* queue, int (*callback)(const void*));
 
 /**
  * Clears a Queue, de-allocating every node and it's contents.
@@ -185,7 +185,7 @@ int queue_remove(queue_t* queue, queue_node_t* node) {
     return 0;
 }
 
-ssize_t queue_remove_if(queue_t* queue, int (*callback)(const queue_node_t*)) {
+ssize_t queue_remove_if(queue_t* queue, int (*callback)(const void*)) {
     if (queue == NULL || callback == NULL) {
         errno = EINVAL;
         return ANNYMOOSE_QUEUE_ERROR;
@@ -197,7 +197,7 @@ ssize_t queue_remove_if(queue_t* queue, int (*callback)(const queue_node_t*)) {
     queue_node_t* cursor = queue->head;
     while (cursor != NULL) {
         if (cursor == queue->head) {
-            if (callback(cursor)) {
+            if (callback(cursor->data)) {
                 cursor = __queue_delete_node(queue, NULL);
                 removed_nodes++;
                 continue;
@@ -207,7 +207,7 @@ ssize_t queue_remove_if(queue_t* queue, int (*callback)(const queue_node_t*)) {
         next = cursor->next;
         if (next == NULL) break;
 
-        if (callback(next)) {
+        if (callback(next->data)) {
             __queue_delete_node(queue, cursor);
             removed_nodes++;
             continue;
