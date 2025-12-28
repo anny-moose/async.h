@@ -90,6 +90,7 @@ void* queue_pop_head(queue_t* queue);
 // #define ANNYMOOSE_QUEUE_IMPLEMENTATION
 #ifdef ANNYMOOSE_QUEUE_IMPLEMENTATION
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ANNYMOOSE_QUEUE_ERROR -1
