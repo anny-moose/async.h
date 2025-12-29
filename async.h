@@ -55,8 +55,8 @@ int DECL(init_tq)(DECL(thread_queue_t) * ctx, int num_threads);
  * ERRORS:
  * EINVAL - Invalid parameter (NULL ctx)
  *
- * All the promises that belong to this queue and haven't been previously completed are invalidated. Awaiting on them will result in
- * undefined behavior.
+ * All the promises that belong to this queue and haven't been previously completed/started are cancelled. A cancelled promise will set
+ * errno to ECANCELED, and the data pointer will be set to NULL. You must await the canceled promises if you don't want to leak memory
  */
 int DECL(destroy_tq)(DECL(thread_queue_t) * ctx);
 
@@ -80,9 +80,10 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
  *
  * ERRORS:
  * EINTR - A signal interrupted this function.
+ * ECANCELED - The promise was canceled.
  * If consumption succeeds, the calling thread's errno is set to the value of errno in the thread that executed the promise. This may result
- * in overlapping errno codes, where if your promise also sets errno to EINTR and returns NULL, you can't differentiate between success and
- * failure.
+ * in overlapping errno codes, where if your promise also sets errno to EINTR or ECANCELED and returns NULL, you can't differentiate between
+ * success and failure.
  *
  * If the function is called with NULL or an invalid promise, the resulting behavior will be undefined.
  * The promise being "consumed" means that it should no longer be used after await, as it is de-allocated.
@@ -125,7 +126,7 @@ void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* timeou
  * ~~~
  *
  * Important notice:
- * The promises of tasks removed are invalidated and should not be awaited.
+ * The promises of tasks removed are cancelled, you should still await them.
  * This function will not cancel any tasks that are ongoing, and those promises should still be collected.
  */
 ssize_t DECL(remove_tasks)(DECL(thread_queue_t) * ctx, int (*pred)(const void*));
@@ -140,13 +141,14 @@ ssize_t DECL(remove_tasks)(DECL(thread_queue_t) * ctx, int (*pred)(const void*))
 #define ANNYMOOSE_QUEUE_IMPLEMENTATION /* assume queue implementation is also required */
 #include "queue.h"
 
-/* perhaps this function should set the promise err code to ECANCELLED and allow it to be awaited instead of freeing, because right now it
- * makes removing tasks a way more tedious task. */
+/* the promise in the task is not freed, but set to an awaitable state. */
 void DECL(__free_func)(void* task) {
     if (task == NULL) return;
     DECL(task_t)* t = (DECL(task_t)*)task;
 
-    free(t->promise);
+    t->promise->err_code = ECANCELED;
+    t->promise->data = NULL;
+    sem_post(&t->promise->done);
 }
 
 void* DECL(__worker_func)(void* arg) {
@@ -233,6 +235,7 @@ static inline int DECL(__init_promise)(DECL(promise_t) * promise) {
     }
 
     promise->data = NULL;
+    promise->err_code = 0;
     if (sem_init(&promise->done, 0, 0)) return -1;
 
     return 0;
