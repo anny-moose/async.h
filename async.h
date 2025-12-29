@@ -114,7 +114,7 @@ void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* timeou
  * Example of a predicate function:
  *
  * ~~~{.c}
- * extern int work_function();
+ * extern void* work_function(void* arg);
  *
  * int pred(const void* ptr) {
  *     const task_t* task = (const task_t*)ptr;
