@@ -65,13 +65,20 @@ int DECL(destroy_tq)(DECL(thread_queue_t) * ctx);
  * @param ctx Pointer to an initialized thread queue
  * @param callback The function that the thread will execute. Any function you would call pthread_create with would work.
  * @param arg The argument that will be passed to the callback function
- * @returns 0 on success, -1 on error
+ * @returns The pointer to the initialized promise on success. NULL on failure.
  *
  * ERRORS:
  * EINVAL - Invalid parameter (NULL ctx or NULL callback)
  * See man pages malloc(3), sem_init(3) for other possible errors
  */
 DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg);
+
+/**
+ * Submits a detached task to the thread queue. A detached task executes, and it's return value is then discarded.
+ * See the documentation for submit_task for more info.
+ * @returns 0 on success, -1 on failure.
+ */
+int DECL(submit_task_detached)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg);
 
 /**
  * Blocks on a promise until it is ready to be consumed, then consumes it.
@@ -124,6 +131,8 @@ void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* timeou
  *     return 0; // don't
  * }
  * ~~~
+ * Please note that if your function interacts with the `promise` field of a task, it should always validate whether the promise exists. (it
+ * doesn't for detached tasks.)
  *
  * Important notice:
  * The promises of tasks removed are cancelled, you should still await them.
@@ -146,9 +155,11 @@ void DECL(__free_func)(void* task) {
     if (task == NULL) return;
     DECL(task_t)* t = (DECL(task_t)*)task;
 
-    t->promise->err_code = ECANCELED;
-    t->promise->data = NULL;
-    sem_post(&t->promise->done);
+    if (t->promise) {
+        t->promise->err_code = ECANCELED;
+        t->promise->data = NULL;
+        sem_post(&t->promise->done);
+    }
 }
 
 void* DECL(__worker_func)(void* arg) {
@@ -162,9 +173,12 @@ void* DECL(__worker_func)(void* arg) {
             pthread_mutex_unlock(&state->queue_mtx);
 
             if (task) {
-                task->promise->data = task->callback(task->args);
-                task->promise->err_code = errno;
-                sem_post(&task->promise->done);
+                if (task->promise) {
+                    task->promise->data = task->callback(task->args);
+                    task->promise->err_code = errno;
+                    sem_post(&task->promise->done);
+                } else
+                    task->callback(task->args);
 
                 free(task);
 
@@ -228,29 +242,32 @@ fail:
     return -1;
 }
 
-static inline int DECL(__init_promise)(DECL(promise_t) * promise) {
-    if (promise == NULL) {
-        errno = EINVAL;
-        return -1;
-    }
+static inline DECL(promise_t) * DECL(__init_promise)() {
+    DECL(promise_t)* promise = (DECL(promise_t)*)malloc(sizeof(DECL(promise_t)));
+    if (!promise) return NULL;
 
     promise->data = NULL;
     promise->err_code = 0;
-    if (sem_init(&promise->done, 0, 0)) return -1;
+    if (sem_init(&promise->done, 0, 0)) {
+        free(promise);
+        return NULL;
+    }
 
-    return 0;
+    return promise;
 }
 
-DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg) {
+/* if detached, returns 1 on success. if not, it returns the pointer to the promise. in both cases NULL is returned if fails. */
+static inline DECL(promise_t) * DECL(__submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg, int detached) {
     if (ctx == NULL || callback == NULL) {
         errno = EINVAL;
         goto fail;
     }
 
-    DECL(promise_t)* promise = (DECL(promise_t)*)malloc(sizeof(DECL(promise_t)));
-    if (!promise) goto fail;
-
-    if (DECL(__init_promise)(promise)) goto fail_post_alloc;
+    DECL(promise_t)* promise = NULL;
+    if (!detached) {
+        promise = DECL(__init_promise)();
+        if (!promise) goto fail;
+    }
 
     DECL(task_t)
     task = {
@@ -268,14 +285,25 @@ DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback
 
     pthread_cond_signal(&ctx->cv);
 
-    return promise;
+    return !detached ? promise : (DECL(promise_t)*)1;
 
 fail_post_promise_init:
-    sem_destroy(&promise->done);
-fail_post_alloc:
-    free(promise);
+    if (!detached) {
+        sem_destroy(&promise->done);
+        free(promise);
+    }
 fail:
     return NULL;
+}
+
+int DECL(submit_task_detached)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg) {
+    if (!DECL(__submit_task)(ctx, callback, arg, 1)) return -1;
+
+    return 0;
+}
+
+DECL(promise_t) * DECL(submit_task)(DECL(thread_queue_t) * ctx, void* (*callback)(void*), void* arg) {
+    return DECL(__submit_task)(ctx, callback, arg, 0);
 }
 
 ssize_t DECL(remove_tasks)(DECL(thread_queue_t) * ctx, int (*pred)(const void*)) {
