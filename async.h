@@ -86,7 +86,6 @@ int DECL(submit_task_detached)(DECL(thread_queue_t) * ctx, void* (*callback)(voi
  * @returns The value that was returned by the promise, or NULL if promise counldn't be consumed
  *
  * ERRORS:
- * EINTR - A signal interrupted this function.
  * ECANCELED - The promise was canceled.
  * If consumption succeeds, the calling thread's errno is set to the value of errno in the thread that executed the promise. This may result
  * in overlapping errno codes, where if your promise also sets errno to EINTR or ECANCELED and returns NULL, you can't differentiate between
@@ -331,7 +330,8 @@ static inline void* DECL(__consume_promise)(DECL(promise_t) * promise) {
 
 void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* abstime) {
     if (abstime) {
-        if (sem_timedwait(&promise->done, abstime)) return NULL;
+        while (sem_timedwait(&promise->done, abstime))
+            if (errno != EINTR) return NULL;
     } else {
         if (sem_trywait(&promise->done)) return NULL;
     }
@@ -340,7 +340,7 @@ void* DECL(timed_await)(DECL(promise_t) * promise, const struct timespec* abstim
 }
 
 void* DECL(await)(DECL(promise_t) * promise) {
-    if (sem_wait(&promise->done)) return NULL;
+    while (sem_wait(&promise->done)); /* wait until waited */
     return DECL(__consume_promise)(promise);
 }
 
