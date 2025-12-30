@@ -1,2 +1,5 @@
 test
 .cache
+
+examples/.cache
+examples/compile_commands.json
