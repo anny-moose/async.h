@@ -115,6 +115,21 @@ void* await(promise_t* promise);
 void* timed_await(promise_t* promise, const struct timespec* timeout);
 
 /**
+ * Blocks on an array of promises and populates an array of results.
+ * @param promises Array of promises to be consumed.
+ * @param count Number of promises.
+ * @param results The array of results to fill. Should be at least as big as
+ * promises, may be NULL to discard.
+ * @param errors The array for captured errno codes. Should be at least as big
+ * as promises, may be NULL to discard.
+ * @returns The number of promises that didn't return NULL. -1 on failure.
+ *
+ * ERRORS:
+ * EINVAL - Invalid parameters (promises is NULL or count is below 1);
+ */
+ssize_t await_all(promise_t** promises, int count, void** results, int* errors);
+
+/**
  * Removes a task if a condition on a predicate succeeds.
  * @param ctx The thread queue to remove the task from.
  * @param pred The function that decides whether a task should be removed.
@@ -362,6 +377,30 @@ void* timed_await(promise_t* promise, const struct timespec* abstime) {
 void* await(promise_t* promise) {
     while (sem_wait(&promise->done)); /* wait until waited */
     return __consume_promise(promise);
+}
+
+ssize_t await_all(promise_t** promises, int count, void** results,
+                  int* errors) {
+    if (promises == NULL || count < 1) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    int initial_errno = errno;
+
+    ssize_t successful_promises = 0;
+    void* result;
+    for (int i = 0; i < count; i++) {
+        result = await(promises[i]);
+
+        if (result != NULL) successful_promises++;
+
+        if (results) results[i] = result;
+        if (errors) errors[i] = errno;
+    }
+    errno = initial_errno;
+
+    return successful_promises;
 }
 
 int destroy_tq(thread_queue_t* ctx) {
