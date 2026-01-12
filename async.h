@@ -174,7 +174,7 @@ ssize_t remove_tasks(thread_queue_t* ctx, int (*pred)(const void*));
 #include "queue.h"
 
 /* the promise in the task is not freed, but set to an awaitable state. */
-void __free_func(void* task) {
+static void __free_func(void* task) {
     if (task == NULL) return;
     task_t* t = (task_t*)task;
 
@@ -185,7 +185,7 @@ void __free_func(void* task) {
     }
 }
 
-void* __worker_func(void* arg) {
+static void* __worker_func(void* arg) {
     thread_queue_t* state = (thread_queue_t*)arg;
 
     pthread_mutex_lock(&state->queue_mtx);
