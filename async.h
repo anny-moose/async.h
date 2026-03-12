@@ -151,6 +151,11 @@ ssize_t await_all(promise_t** promises, int count, void** results, int* errors);
  *     return 0; // don't
  * }
  * ~~~
+ *
+ * There is a macro for defining a predicate function that casts the task
+ * pointer automatically called `DEFINE_PREDICATE_FUNCTION`. See
+ * examples/cancel_example.c
+ *
  * Please note that if your function interacts with the `promise` field of a
  * task, it should always validate whether the promise exists. (it doesn't for
  * detached tasks.)
@@ -162,9 +167,19 @@ ssize_t await_all(promise_t** promises, int count, void** results, int* errors);
  */
 ssize_t remove_tasks(thread_queue_t* ctx, int (*pred)(const void*));
 
+/* it would be way smarter to just use a specialized non-generic queue, i'll
+ * probably do that later */
+#define DEFINE_PREDICATE_FUNCTION(name, varname)                              \
+    static inline int private_internal_##name##_implementation(               \
+        const task_t* varname);                                               \
+    int name(const void* task) {                                              \
+        return private_internal_##name##_implementation((const task_t*)task); \
+    }                                                                         \
+    static inline int private_internal_##name##_implementation(               \
+        const task_t* varname)
+
 #endif /* ANNYMOOSE_ASYNC_H */
 
-// #define ANNYMOOSE_ASYNC_IMPLEMENTATION /* syntax highlighting my beloved */
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
 #include <errno.h>
 #include <signal.h>

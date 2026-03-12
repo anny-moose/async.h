@@ -16,12 +16,20 @@ void* work_func(void* params) {
     return params;
 }
 
+/* The defined function has the signature int cmp_func(const void* task) */
+DEFINE_PREDICATE_FUNCTION(cmp_func, task) {
+    if (task->callback == work_func) return 1;
+    return 0;
+}
+
+/*
 int cmp_func(const void* task_param) {
     const task_t* task = task_param;
 
     if (task->callback == work_func) return 1;
     return 0;
 }
+*/
 
 #define TIME 5
 #define PROMISES 60
