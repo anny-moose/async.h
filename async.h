@@ -82,15 +82,14 @@ int submit_task_detached(thread_queue_t* ctx, void* (*callback)(void*),
 /**
  * Blocks on a promise until it is ready to be consumed, then consumes it.
  * @param promise The promise to be awaited.
- * @returns The value that was returned by the promise, or NULL if promise
- * counldn't be consumed
+ * @returns The value that was returned by the promise, or ASYNC_INVALID_PTR on
+ * function error
  *
  * ERRORS:
- * ECANCELED - The promise was canceled.
  * If consumption succeeds, the calling thread's errno is set to the value of
- * errno in the thread that executed the promise. This may result in overlapping
- * errno codes, where if your promise also sets errno to EINTR or ECANCELED and
- * returns NULL, you can't differentiate between success and failure.
+ * errno in the thread that executed the promise.
+ * If the function had returned the invalid pointer, ERRNO may be set to:
+ * ECANCELED - Promise was cancelled.
  *
  * If the function is called with NULL or an invalid promise, the resulting
  * behavior will be undefined. The promise being "consumed" means that it should
@@ -102,8 +101,8 @@ void* await(promise_t* promise);
  * Blocks on a promise until it is ready to be consumed or timeout is expired.
  * The promise is consumed if timeout isn't reached
  * @param promise The promise to be awaited.
- * @param timeout The amount of time to be waited for at most. May be NULL to
- * poll.
+ * @param timeout The absolute time point at which the function will return an
+ * invalid pointer if the semaphore can't be waited. May be NULL to poll.
  *
  * See documentation for await for additional info.
  *
@@ -178,15 +177,23 @@ ssize_t remove_tasks(thread_queue_t* ctx, int (*pred)(const void*));
     static inline int private_internal_##name##_implementation(               \
         const task_t* varname)
 
+extern void* const ASYNC_INVALID_PTR;
+
 #endif /* ANNYMOOSE_ASYNC_H */
 
 #ifdef ANNYMOOSE_ASYNC_IMPLEMENTATION
 #include <errno.h>
 #include <signal.h>
+#include <stdlib.h>
 
 #define ANNYMOOSE_QUEUE_IMPLEMENTATION /* assume queue implementation is also \
                                           required */
 #include "queue.h"
+
+static const char ERROR_OBJECT = 0;
+
+void* const ASYNC_INVALID_PTR =
+    (char*)&ERROR_OBJECT; /* writing to ERROR_OBJECT should crash */
 
 /* the promise in the task is not freed, but set to an awaitable state. */
 static void __free_func(void* task) {
@@ -195,7 +202,7 @@ static void __free_func(void* task) {
 
     if (t->promise) {
         t->promise->err_code = ECANCELED;
-        t->promise->data = NULL;
+        t->promise->data = ASYNC_INVALID_PTR;
         sem_post(&t->promise->done);
     }
 }
@@ -381,9 +388,9 @@ static inline void* __consume_promise(promise_t* promise) {
 void* timed_await(promise_t* promise, const struct timespec* abstime) {
     if (abstime) {
         while (sem_timedwait(&promise->done, abstime))
-            if (errno != EINTR) return NULL;
+            if (errno != EINTR) return ASYNC_INVALID_PTR;
     } else {
-        if (sem_trywait(&promise->done)) return NULL;
+        if (sem_trywait(&promise->done)) return ASYNC_INVALID_PTR;
     }
 
     return __consume_promise(promise);
@@ -408,7 +415,8 @@ ssize_t await_all(promise_t** promises, int count, void** results,
     for (int i = 0; i < count; i++) {
         result = await(promises[i]);
 
-        if (result != NULL) successful_promises++;
+        if (result != NULL && result != ASYNC_INVALID_PTR)
+            successful_promises++;
 
         if (results) results[i] = result;
         if (errors) errors[i] = errno;
